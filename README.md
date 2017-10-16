@@ -18,4 +18,4 @@ python train_rnn.py --cuda
 ```
 
 log-loss = 1.04
-acc = 45.9%
+acc = 46.1%

@@ -19,11 +19,11 @@ parser.add_argument('--nfeatures', type=int, default=20,
                     help='dimension of features')
 parser.add_argument('--nhid', type=int, default=20,
                     help='number of hidden units per layer')
-parser.add_argument('--nlayers', type=int, default=1,
+parser.add_argument('--nlayers', type=int, default=2,
                     help='number of layers')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='initial learning rate')
-parser.add_argument('--clip', type=float, default=5,
+parser.add_argument('--clip', type=float, default=2,
                     help='gradient clipping')
 parser.add_argument('--lr_decay', type=float, default=0.25,
                     help='decay lr by the rate')
