@@ -6,11 +6,18 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from torch.autograd import Variable
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
 
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
 parser.add_argument('--data', type=str, default='./data/sz002821',
                     help='location of the data')
-parser.add_argument('--nhid', type=int, default=100,
+parser.add_argument('--nfeatures', type=int, default=20,
+                    help='dimension of features')
+parser.add_argument('--nhid', type=int, default=20,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=1,
                     help='number of layers')
@@ -44,27 +51,47 @@ for arg in vars(args):
     print ' '.join(map(str, (arg, getattr(args, arg))))
 
 class DataIter(object):
-    def __init__(self, path, batch_size, seq_len, cuda=False):
+    def __init__(self, path, batch_size, seq_len, scaler, cuda=False):
         self.path = path
         self.batch_size = batch_size
         self.seq_len = seq_len
         self.cuda = cuda
+        self.scaler = scaler
 
         self.build_data()
         self.batchify()
 
     def build_data(self):
-        data_type = np.dtype([('features', 'f8', (20, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        data_type = np.dtype([('features', 'f8', (args.nfeatures, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
         data = np.loadtxt(self.path, data_type, delimiter=' ')
         features = data['features']
         labels1 = data['labels1']
         labels2 = data['labels2']
+        if self.scaler == None:
+            self.scaler = StandardScaler().fit(features)
+        features = self.scaler.transform(features)
+        count0 = 0
+        count1 = 0
+        count2 = 0
         for i in range(labels1.shape[0]):
-            labels1[i] += 100
-        for i in range(labels2.shape[0]):
-            labels2[i] += 100
-        for i in range(labels1.shape[0]):
-            labels1[i] = labels1[i] *201 + labels2[i]
+            if labels1[i] + labels2[i] > 0:
+                labels1[i] = 2
+                count2 += 1
+            elif labels1[i] + labels2[i] == 0:
+                labels1[i] = 1
+                count1 += 1
+            else:
+                labels1[i] = 0
+                count0 += 1
+        count = float(count0+count1+count2)
+        print "Class 0: %.4f%%, Class 1: %.4f%%, Class 2: %.4f%%"%(count0/count*100, count1/count*100, count2/count*100)
+            #labels1[i]  = labels1[i] *201 + labels2[i]
+        #for i in range(labels1.shape[0]):
+            #labels1[i] += 100
+        #for i in range(labels2.shape[0]):
+            #labels2[i] += 100
+        #for i in range(labels1.shape[0]):
+            #labels1[i] = labels1[i] *201 + labels2[i]
         features = torch.Tensor(data['features'])
         labels1 = torch.LongTensor(labels1)
         labels2 = torch.LongTensor(labels2)
@@ -130,12 +157,13 @@ class RNNModel(nn.Module):
         else:
             return Variable(weight.new(self.nlayers, bsz, self.nhid).zero_())
 
-def countACC(pred, label, num):
+def count(pred, label, num, results, labels):
     count = 0
+    pred = pred.cpu()
+    label = label.cpu()
     for i in range(num):
-        if pred.data[i][0] == label.data[i]:
-            count += 1
-    return count
+        results.append(pred.data[i][0])
+        labels.append(label.data[i])
 
 def repackage_hidden(h):
     """Wraps hidden states in new Variables, to detach them from their history."""
@@ -149,13 +177,31 @@ class Trainer(object):
                  train_iter, valid_iter, test_iter=None,
                  max_epochs=50):
         self.model = model
-        self.optimizer = optim.Adamax(self.model.parameters(), lr = args.lr)
+        self.optimizer = optim.RMSprop(self.model.parameters(), lr = args.lr)
         self.criterion = nn.CrossEntropyLoss()
         self.train_iter = train_iter
         self.valid_iter = valid_iter
         self.test_iter = test_iter
         self.max_epochs = max_epochs
         self.noutput = self.model.decoder.weight.size(0)
+        self.results = []
+        self.labels = []
+
+    def score(self):
+        print "total acc: %.4f%%"%(accuracy_score(self.labels, self.results)*100)
+        for i in range(3):
+            pre = precision_score(self.labels, self.results, labels=[i], average='micro')
+            rec = recall_score(self.labels, self.results, labels=[i], average='micro')
+            f1 = f1_score(self.labels, self.results, labels=[i], average='micro')
+            print "for class %d:"%(i)
+            print "precision: %.4f, recall: %.4f, f1: %.4f "%(pre, rec, f1)
+            print ""
+        return
+
+    def clear_results(self):
+        self.results = []
+        self.labels = []
+        return
 
     def __forward(self, data, hidden, target):
         output, hidden = self.model(data, hidden)
@@ -164,17 +210,15 @@ class Trainer(object):
 
     def __train(self, lr, epoch):
         self.model.train()
+        self.clear_results()
         total_loss = 0
-        acc = [0, 0]
         start_time = time.time()
         hidden = self.model.init_hidden(self.train_iter.batch_size)
         for batch, (d, targets) in enumerate(self.train_iter):
             self.model.zero_grad()
             hidden = repackage_hidden(hidden)
             output, hidden, loss = self.__forward(d, hidden, targets)
-            count = countACC(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0])
-            acc[0] += count
-            acc[1] += targets.size()[0]
+            count(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0], self.results, self.labels)
             #loss.backward(retain_variables=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm(self.model.parameters(), 1.0 * args.clip / args.batch_size)
@@ -186,9 +230,10 @@ class Trainer(object):
                 cur_loss = total_loss[0] / args.log_interval
                 elapsed = time.time() - start_time
                 print('| epoch {:3d} | lr {:02.5f} | wps {:5.2f} | '
-                        'loss {:5.2f} | acc {:1.3f}'.format(
+                        'loss {:5.2f}'.format(
                     epoch, lr,
-                    args.batch_size * args.bptt / (elapsed / args.log_interval), cur_loss, float(acc[0])/acc[1]))
+                    args.batch_size * args.bptt / (elapsed / args.log_interval), cur_loss))
+                self.score()
                 total_loss = 0
                 start_time = time.time()
 
@@ -231,18 +276,16 @@ class Trainer(object):
     def evaluate(self, data_source, prefix='valid'):
         # Turn on evaluation mode which disables dropout.
         self.model.eval()
+        self.clear_results()
         total_loss = 0
-        acc = [0, 0]
         hidden = self.model.init_hidden(eval_batch_size)
         for d, targets in data_source:
             output, hidden, loss = self.__forward(d, hidden, targets)
-            count = countACC(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0])
-            acc[0] += count
-            acc[1] += targets.size()[0]
+            count(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0], self.results, self.labels)
             total_loss += loss.data
         ave_loss = total_loss[0] / len(data_source)
         print('| {0} loss {1:5.2f} | {0} '.format(prefix, ave_loss))
-        print('| acc {:1.3f}'.format(float(acc[0])/acc[1]))
+        self.score()
         return ave_loss
 
 if __name__ == '__main__':
@@ -258,22 +301,28 @@ if __name__ == '__main__':
 
     eval_batch_size = 10
 
+    scaler = None
     train_iter = DataIter(
         path + 'train.txt',
         args.batch_size,
         args.bptt,
+        scaler,
         cuda = args.cuda,
     )
+    scaler = train_iter.scaler
+
     valid_iter = DataIter(
         path + 'valid.txt',
         eval_batch_size,
         args.bptt,
+        scaler,
         cuda = args.cuda,
     )
     test_iter = DataIter(
         path + 'test.txt',
         eval_batch_size,
         args.bptt,
+        scaler,
         cuda = args.cuda,
     )
 
@@ -282,9 +331,9 @@ if __name__ == '__main__':
     ###############################################################################
 
     model = RNNModel(
-        nfed = 20,
+        nfed = args.nfeatures,
         nhid = args.nhid,
-        noutputs = 201*201,
+        noutputs = 3,
         nlayers = args.nlayers,
         dropout = args.dropout,
     )

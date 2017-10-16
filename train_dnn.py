@@ -6,11 +6,18 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from torch.autograd import Variable
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
 
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
 parser.add_argument('--data', type=str, default='./data/sz002821',
                     help='location of the data')
-parser.add_argument('--nhid', type=int, default=50,
+parser.add_argument('--nfeatures', type=int, default=20,
+                    help='dimension of features')
+parser.add_argument('--nhid', type=int, default=20,
                     help='number of hidden units per layer')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='initial learning rate')
@@ -20,7 +27,7 @@ parser.add_argument('--lr_decay', type=float, default=0.25,
                     help='decay lr by the rate')
 parser.add_argument('--epochs', type=int, default=50,
                     help='upper epoch limit')
-parser.add_argument('--batch_size', type=int, default=50, metavar='N',
+parser.add_argument('--batch_size', type=int, default=40, metavar='N',
                     help='batch size')
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='dropout applied to layers (0 = no dropout)')
@@ -40,26 +47,40 @@ for arg in vars(args):
     print ' '.join(map(str, (arg, getattr(args, arg))))
 
 class DataIter(object):
-    def __init__(self, path, batch_size, cuda=False):
+    def __init__(self, path, batch_size, scaler, cuda=False):
         self.path = path
         self.batch_size = batch_size
         self.cuda = cuda
+        self.scaler = scaler
 
         self.build_data()
         self.batchify()
 
     def build_data(self):
-        data_type = np.dtype([('features', 'f8', (20, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        data_type = np.dtype([('features', 'f8', (args.nfeatures, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
         data = np.loadtxt(self.path, data_type, delimiter=' ')
         features = data['features']
         labels1 = data['labels1']
         labels2 = data['labels2']
+        if self.scaler == None:
+            self.scaler = StandardScaler().fit(features)
+        features = self.scaler.transform(features)
+        count0 = 0
+        count1 = 0
+        count2 = 0
         for i in range(labels1.shape[0]):
-            labels1[i] += 100
-        for i in range(labels2.shape[0]):
-            labels2[i] += 100
-        for i in range(labels1.shape[0]):
-            labels1[i]  = labels1[i] *201 + labels2[i]
+            if labels1[i] + labels2[i] > 0:
+                labels1[i] = 2
+                count2 += 1
+            elif labels1[i] + labels2[i] == 0:
+                labels1[i] = 1
+                count1 += 1
+            else:
+                labels1[i] = 0
+                count0 += 1
+        count = float(count0+count1+count2)
+        print "Class 0: %.4f%%, Class 1: %.4f%%, Class 2: %.4f%%"%(count0/count*100, count1/count*100, count2/count*100)
+            #labels1[i]  = labels1[i] *201 + labels2[i]
         features = torch.Tensor(data['features'])
         labels1 = torch.LongTensor(labels1)
         labels2 = torch.LongTensor(labels2)
@@ -117,25 +138,42 @@ class DNNModel(nn.Module):
         output = self.drop(self.decoder(hidden))
         return output
 
-def countACC(pred, label, num):
+def count(pred, label, num, results, labels):
     count = 0
+    pred = pred.cpu()
+    label = label.cpu()
     for i in range(num):
-        if pred.data[i][0] == label.data[i]:
-            count += 1
-    return count
+        results.append(pred.data[i][0])
+        labels.append(label.data[i])
 
 class Trainer(object):
     def __init__(self, model,
                  train_iter, valid_iter, test_iter=None,
                  max_epochs=50):
         self.model = model
-        self.optimizer = optim.Adamax(self.model.parameters(), lr = args.lr)
+        self.optimizer = optim.RMSprop(self.model.parameters(), lr = args.lr)
         self.criterion = nn.CrossEntropyLoss()
         self.train_iter = train_iter
         self.valid_iter = valid_iter
         self.test_iter = test_iter
         self.max_epochs = max_epochs
         self.noutput = self.model.decoder.weight.size(0)
+
+    def score(self):
+        print "total acc: %.4f%%"%(accuracy_score(self.labels, self.results)*100)
+        for i in range(3):
+            pre = precision_score(self.labels, self.results, labels=[i], average='micro')
+            rec = recall_score(self.labels, self.results, labels=[i], average='micro')
+            f1 = f1_score(self.labels, self.results, labels=[i], average='micro')
+            print "for class %d:"%(i)
+            print "precision: %.4f, recall: %.4f, f1: %.4f "%(pre, rec, f1)
+            print ""
+        return
+
+    def clear_results(self):
+        self.results = []
+        self.labels = []
+        return
 
     def __forward(self, data, target):
         output = self.model(data)
@@ -144,15 +182,13 @@ class Trainer(object):
 
     def __train(self, lr, epoch):
         self.model.train()
+        self.clear_results()
         total_loss = 0
-        acc = [0, 0]
         start_time = time.time()
         for batch, (d, targets) in enumerate(self.train_iter):
             self.model.zero_grad()
             output, loss = self.__forward(d, targets)
-            count = countACC(torch.max(output, 1)[1], targets, args.batch_size)
-            acc[0] += count
-            acc[1] += args.batch_size
+            count(torch.max(output, 1)[1], targets, args.batch_size, self.results, self.labels)
             #loss.backward(retain_variables=True)
             loss.backward()
             self.optimizer.step()
@@ -163,9 +199,10 @@ class Trainer(object):
                 cur_loss = total_loss[0] / args.log_interval
                 elapsed = time.time() - start_time
                 print('| epoch {:3d} | lr {:02.5f} | wps {:5.2f} | '
-                        'loss {:5.2f} | acc {:1.3f}'.format(
+                        'loss {:5.2f} '.format(
                     epoch, lr,
-                    args.batch_size / (elapsed / args.log_interval), cur_loss, float(acc[0])/acc[1]))
+                    args.batch_size / (elapsed / args.log_interval), cur_loss))
+                self.score()
                 total_loss = 0
                 start_time = time.time()
 
@@ -208,17 +245,15 @@ class Trainer(object):
     def evaluate(self, data_source, prefix='valid'):
         # Turn on evaluation mode which disables dropout.
         self.model.eval()
+        self.clear_results()
         total_loss = 0
-        acc = [0, 0]
         for d, targets in data_source:
             output, loss = self.__forward(d, targets)
-            count = countACC(torch.max(output, 1)[1], targets, 10)
-            acc[0] += count
-            acc[1] += 10
+            count(torch.max(output, 1)[1], targets, 10, self.results, self.labels)
             total_loss += loss.data
         ave_loss = total_loss[0] / len(data_source)
         print('| {0} loss {1:5.2f} | {0} '.format(prefix, ave_loss))
-        print('| acc {:1.3f}'.format(float(acc[0])/acc[1]))
+        self.score
         return ave_loss
 
 if __name__ == '__main__':
@@ -234,19 +269,25 @@ if __name__ == '__main__':
 
     eval_batch_size = 10
 
+    scaler = None
     train_iter = DataIter(
         path + 'train.txt',
         args.batch_size,
+        scaler,
         cuda = args.cuda,
     )
+    scaler = train_iter.scaler
+
     valid_iter = DataIter(
         path + 'valid.txt',
         eval_batch_size,
+        scaler,
         cuda = args.cuda,
     )
     test_iter = DataIter(
         path + 'test.txt',
         eval_batch_size,
+        scaler,
         cuda = args.cuda,
     )
 
@@ -255,9 +296,9 @@ if __name__ == '__main__':
     ###############################################################################
 
     model = DNNModel(
-        nfed = 20,
+        nfed = args.nfeatures,
         nhid = args.nhid,
-        noutputs = 201*201,
+        noutputs = 3,
         dropout = args.dropout,
     )
 
