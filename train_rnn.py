@@ -15,7 +15,7 @@ from sklearn.metrics import recall_score
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
 parser.add_argument('--data', type=str, default='./data/sz002821',
                     help='location of the data')
-parser.add_argument('--nfeatures', type=int, default=20,
+parser.add_argument('--nfeatures', type=int, default=10,
                     help='dimension of features')
 parser.add_argument('--nhid', type=int, default=20,
                     help='number of hidden units per layer')
@@ -25,13 +25,13 @@ parser.add_argument('--lr', type=float, default=0.001,
                     help='initial learning rate')
 parser.add_argument('--clip', type=float, default=2,
                     help='gradient clipping')
-parser.add_argument('--lr_decay', type=float, default=0.25,
+parser.add_argument('--lr_decay', type=float, default=0.1,
                     help='decay lr by the rate')
 parser.add_argument('--epochs', type=int, default=50,
                     help='upper epoch limit')
-parser.add_argument('--batch_size', type=int, default=20, metavar='N',
+parser.add_argument('--batch_size', type=int, default=40, metavar='N',
                     help='batch size')
-parser.add_argument('--bptt', type=int, default=20,
+parser.add_argument('--bptt', type=int, default=5,
                     help='sequence length')
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='dropout applied to layers (0 = no dropout)')
@@ -39,7 +39,7 @@ parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
-parser.add_argument('--log-interval', type=int, default=100, metavar='N',
+parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                     help='report interval')
 parser.add_argument('--use_define', action='store_true')
 parser.add_argument('--save', type=str,  default='./models/rnn.pt',
@@ -62,14 +62,18 @@ class DataIter(object):
         self.batchify()
 
     def build_data(self):
-        data_type = np.dtype([('features', 'f8', (args.nfeatures, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('features2', 'f8', (args.nfeatures, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
         data = np.loadtxt(self.path, data_type, delimiter=' ')
-        features = data['features']
+        features1 = data['features1']
+        features2 = data['features2']
         labels1 = data['labels1']
         labels2 = data['labels2']
+        #features1 = 0.2 * (features1 - 130)
+        features = features2  #np.concatenate((features1, features2, features1 * features2), axis=1)
         if self.scaler == None:
             self.scaler = StandardScaler().fit(features)
         features = self.scaler.transform(features)
+        #features = np.concatenate((features1, features2), axis=1)
         count0 = 0
         count1 = 0
         count2 = 0
@@ -92,7 +96,7 @@ class DataIter(object):
             #labels2[i] += 100
         #for i in range(labels1.shape[0]):
             #labels1[i] = labels1[i] *201 + labels2[i]
-        features = torch.Tensor(data['features'])
+        features = torch.Tensor(features)
         labels1 = torch.LongTensor(labels1)
         labels2 = torch.LongTensor(labels2)
 
@@ -108,7 +112,7 @@ class DataIter(object):
         label = self.label.t().contiguous()
         label = label[:, :nbatch * self.batch_size]
         # Evenly divide the data across the bsz batches.
-        data = data.view(-1, self.batch_size, 20).contiguous()
+        data = data.view(-1, self.batch_size, args.nfeatures).contiguous()
         label = label.view(-1, self.batch_size).contiguous()
         self.data = data.cuda() if self.cuda else data
         self.label = label.cuda() if self.cuda else label
@@ -188,7 +192,8 @@ class Trainer(object):
         self.labels = []
 
     def score(self):
-        print "total acc: %.4f%%"%(accuracy_score(self.labels, self.results)*100)
+        acc = accuracy_score(self.labels, self.results)
+        print "total acc: %.4f%%"%(acc * 100)
         for i in range(3):
             pre = precision_score(self.labels, self.results, labels=[i], average='micro')
             rec = recall_score(self.labels, self.results, labels=[i], average='micro')
@@ -196,7 +201,7 @@ class Trainer(object):
             print "for class %d:"%(i)
             print "precision: %.4f, recall: %.4f, f1: %.4f "%(pre, rec, f1)
             print ""
-        return
+        return acc
 
     def clear_results(self):
         self.results = []
@@ -210,7 +215,7 @@ class Trainer(object):
 
     def __train(self, lr, epoch):
         self.model.train()
-        self.clear_results()
+        #self.clear_results()
         total_loss = 0
         start_time = time.time()
         hidden = self.model.init_hidden(self.train_iter.batch_size)
@@ -218,7 +223,7 @@ class Trainer(object):
             self.model.zero_grad()
             hidden = repackage_hidden(hidden)
             output, hidden, loss = self.__forward(d, hidden, targets)
-            count(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0], self.results, self.labels)
+            #count(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0], self.results, self.labels)
             #loss.backward(retain_variables=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm(self.model.parameters(), 1.0 * args.clip / args.batch_size)
@@ -233,7 +238,7 @@ class Trainer(object):
                         'loss {:5.2f}'.format(
                     epoch, lr,
                     args.batch_size * args.bptt / (elapsed / args.log_interval), cur_loss))
-                self.score()
+                #self.score()
                 total_loss = 0
                 start_time = time.time()
 
@@ -252,7 +257,7 @@ class Trainer(object):
                 print('| end of epoch {:3d} | time: {:5.2f}s '.format(epoch, (time.time() - epoch_start_time),))
                 print('-' * 89)
                 # Save the model if the validation loss is the best we've seen so far.
-                if not best_val_loss or val_loss < best_val_loss:
+                if not best_val_loss or val_loss > best_val_loss:
                     with open(args.save, 'wb') as f:
                         torch.save(self.model, f)
                     best_val_loss = val_loss
@@ -285,8 +290,8 @@ class Trainer(object):
             total_loss += loss.data
         ave_loss = total_loss[0] / len(data_source)
         print('| {0} loss {1:5.2f} | {0} '.format(prefix, ave_loss))
-        self.score()
-        return ave_loss
+        acc = self.score()
+        return acc
 
 if __name__ == '__main__':
     # Set the random seed manually for reproducibility.
