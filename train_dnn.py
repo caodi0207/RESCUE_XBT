@@ -13,9 +13,9 @@ from sklearn.metrics import precision_score
 from sklearn.metrics import recall_score
 
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
-parser.add_argument('--data', type=str, default='./data/sz002821',
+parser.add_argument('--data', type=str, default='./data/sz300244',
                     help='location of the data')
-parser.add_argument('--nfeatures', type=int, default=10,
+parser.add_argument('--nfeatures', type=int, default=25,
                     help='dimension of features')
 parser.add_argument('--nhid', type=int, default=20,
                     help='number of hidden units per layer')
@@ -57,17 +57,20 @@ class DataIter(object):
         self.batchify()
 
     def build_data(self):
-        data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('features2', 'f8', (args.nfeatures, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        #data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('features2', 'f8', (args.nfeatures, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        
         data = np.loadtxt(self.path, data_type, delimiter=' ')
         features1 = data['features1']
-        features2 = data['features2']
+        #features2 = data['features2']
         labels1 = data['labels1']
         labels2 = data['labels2']
         #features1 = 0.2 * (features1 - 130)
-        features = features2  #np.concatenate((features1, features2, features1 * features2), axis=1)
+        features = features1  #np.concatenate((features1, features2, features1 * features2), axis=1)
         if self.scaler == None:
             self.scaler = StandardScaler().fit(features)
         features = self.scaler.transform(features)
+        #features = features
         #features = np.concatenate((features1, features2), axis=1)
         count0 = 0
         count1 = 0
