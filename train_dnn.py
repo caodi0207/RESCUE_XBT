@@ -13,7 +13,7 @@ from sklearn.metrics import precision_score
 from sklearn.metrics import recall_score
 
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
-parser.add_argument('--data', type=str, default='./data/sz300244',
+parser.add_argument('--data', type=str, default='./data/sz002821',
                     help='location of the data')
 parser.add_argument('--nfeatures', type=int, default=25,
                     help='dimension of features')
