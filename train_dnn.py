@@ -13,11 +13,11 @@ from sklearn.metrics import precision_score
 from sklearn.metrics import recall_score
 
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
-parser.add_argument('--data', type=str, default='./data/sz002821',
+parser.add_argument('--data', type=str, default='./data/sz002821_2',
                     help='location of the data')
-parser.add_argument('--nfeatures', type=int, default=25,
+parser.add_argument('--nfeatures', type=int, default=30,
                     help='dimension of features')
-parser.add_argument('--nhid', type=int, default=20,
+parser.add_argument('--nhid', type=int, default=100,
                     help='number of hidden units per layer')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='initial learning rate')
@@ -57,8 +57,8 @@ class DataIter(object):
         self.batchify()
 
     def build_data(self):
-        #data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('features2', 'f8', (args.nfeatures, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
-        data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        #data_type = np.dtype([('features1', 'f8', (19, )), ('features2', 'f8', (11, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        data_type = np.dtype([('features1', 'f8', (30, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
         
         data = np.loadtxt(self.path, data_type, delimiter=' ')
         features1 = data['features1']
@@ -66,11 +66,11 @@ class DataIter(object):
         labels1 = data['labels1']
         labels2 = data['labels2']
         #features1 = 0.2 * (features1 - 130)
-        features = features1  #np.concatenate((features1, features2, features1 * features2), axis=1)
+        #np.concatenate((features1, features2, features1 * features2), axis=1)
         if self.scaler == None:
-            self.scaler = StandardScaler().fit(features)
-        features = self.scaler.transform(features)
-        #features = features
+            self.scaler = StandardScaler().fit(features1)
+        features1 = self.scaler.transform(features1)
+        features = features1
         #features = np.concatenate((features1, features2), axis=1)
         count0 = 0
         count1 = 0
@@ -158,7 +158,7 @@ class Trainer(object):
                  train_iter, valid_iter, test_iter=None,
                  max_epochs=50):
         self.model = model
-        self.optimizer = optim.RMSprop(self.model.parameters(), lr = args.lr)
+        self.optimizer = optim.Adam(self.model.parameters(), lr = args.lr)
         self.criterion = nn.CrossEntropyLoss()
         self.train_iter = train_iter
         self.valid_iter = valid_iter
@@ -238,6 +238,7 @@ class Trainer(object):
                     print("restore the model.")
                     model = torch.load(args.save)
                     lr *= args.lr_decay
+                    self.optimizer = optim.Adam(self.model.parameters(), lr = lr)
         except KeyboardInterrupt:
             print('-' * 89)
             print('Exiting from training early')

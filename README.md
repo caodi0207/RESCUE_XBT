@@ -7,8 +7,7 @@ for DNN version, please run:
 python train_dnn.py --cuda
 ```
 
-log-loss = 1.04
-acc = 46.5%
+acc = 50.2%
 
 
 for RNN version, please run:
@@ -17,5 +16,4 @@ for RNN version, please run:
 python train_rnn.py --cuda
 ```
 
-log-loss = 1.04
-acc = 46.6%
+acc = 52.4% # h=50, nlayers=3

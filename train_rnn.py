@@ -13,25 +13,25 @@ from sklearn.metrics import precision_score
 from sklearn.metrics import recall_score
 
 parser = argparse.ArgumentParser(description='PyTorch Stock Value Prediction Model')
-parser.add_argument('--data', type=str, default='./data/sz002821',
+parser.add_argument('--data', type=str, default='./data/sz002821_2',
                     help='location of the data')
-parser.add_argument('--nfeatures', type=int, default=25,
+parser.add_argument('--nfeatures', type=int, default=30,
                     help='dimension of features')
-parser.add_argument('--nhid', type=int, default=20,
+parser.add_argument('--nhid', type=int, default=50,
                     help='number of hidden units per layer')
-parser.add_argument('--nlayers', type=int, default=2,
+parser.add_argument('--nlayers', type=int, default=3,
                     help='number of layers')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='initial learning rate')
-parser.add_argument('--clip', type=float, default=2,
+parser.add_argument('--clip', type=float, default=5,
                     help='gradient clipping')
-parser.add_argument('--lr_decay', type=float, default=0.1,
+parser.add_argument('--lr_decay', type=float, default=0.5,
                     help='decay lr by the rate')
 parser.add_argument('--epochs', type=int, default=50,
                     help='upper epoch limit')
-parser.add_argument('--batch_size', type=int, default=40, metavar='N',
+parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                     help='batch size')
-parser.add_argument('--bptt', type=int, default=5,
+parser.add_argument('--bptt', type=int, default=35,
                     help='sequence length')
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='dropout applied to layers (0 = no dropout)')
@@ -62,8 +62,8 @@ class DataIter(object):
         self.batchify()
 
     def build_data(self):
-        #data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('features2', 'f8', (args.nfeatures, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
-        data_type = np.dtype([('features1', 'f8', (args.nfeatures, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        #data_type = np.dtype([('features1', 'f8', (19, )), ('features2', 'f8', (11, )),('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
+        data_type = np.dtype([('features1', 'f8', (30, )), ('labels1', 'i8', (1, )), ('labels2', 'i8', (1, ))])
         
         data = np.loadtxt(self.path, data_type, delimiter=' ')
         features1 = data['features1']
@@ -71,11 +71,11 @@ class DataIter(object):
         labels1 = data['labels1']
         labels2 = data['labels2']
         #features1 = 0.2 * (features1 - 130)
-        features = features1  #np.concatenate((features1, features2, features1 * features2), axis=1)
+        #np.concatenate((features1, features2, features1 * features2), axis=1)
         if self.scaler == None:
-            self.scaler = StandardScaler().fit(features)
-        features = self.scaler.transform(features)
-        #features = features
+            self.scaler = StandardScaler().fit(features1)
+        features1 = self.scaler.transform(features1)
+        features = features1
         #features = np.concatenate((features1, features2), axis=1)
         count0 = 0
         count1 = 0
@@ -99,7 +99,6 @@ class DataIter(object):
             #labels2[i] += 100
         #for i in range(labels1.shape[0]):
             #labels1[i] = labels1[i] *201 + labels2[i]
-        print features
         features = torch.Tensor(features)
         labels1 = torch.LongTensor(labels1)
         labels2 = torch.LongTensor(labels2)
@@ -139,7 +138,6 @@ class RNNModel(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.rnn = nn.LSTM(nfed, nhid, nlayers, dropout=dropout)
         self.decoder = nn.Linear(nhid, noutputs)
-        self.sigmoid = nn.Sigmoid()
         self.init_weights()
 
         self.rnn_type = "LSTM"
@@ -150,9 +148,9 @@ class RNNModel(nn.Module):
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden):
-        input = self.drop(input)
+        emb = self.drop(input)
 
-        output, hidden = self.rnn(input, hidden)
+        output, hidden = self.rnn(emb, hidden)
         output = self.drop(output)
         decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
         return decoded.view(output.size(0), output.size(1), decoded.size(1)), hidden
@@ -185,7 +183,7 @@ class Trainer(object):
                  train_iter, valid_iter, test_iter=None,
                  max_epochs=50):
         self.model = model
-        self.optimizer = optim.RMSprop(self.model.parameters(), lr = args.lr)
+        self.optimizer = optim.Adam(self.model.parameters(), lr = args.lr)
         self.criterion = nn.CrossEntropyLoss()
         self.train_iter = train_iter
         self.valid_iter = valid_iter
@@ -230,7 +228,7 @@ class Trainer(object):
             #count(torch.max(output.view(-1, self.noutput), 1)[1], targets, targets.size()[0], self.results, self.labels)
             #loss.backward(retain_variables=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm(self.model.parameters(), 1.0 * args.clip / args.batch_size)
+            #torch.nn.utils.clip_grad_norm(self.model.parameters(), 1.0 * args.clip / args.batch_size)
             self.optimizer.step()
 
             total_loss += loss.data
@@ -270,6 +268,7 @@ class Trainer(object):
                     print("restore the model.")
                     model = torch.load(args.save)
                     lr *= args.lr_decay
+                    self.optimizer = optim.Adam(self.model.parameters(), lr = lr)
         except KeyboardInterrupt:
             print('-' * 89)
             print('Exiting from training early')
