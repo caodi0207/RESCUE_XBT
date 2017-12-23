@@ -17,6 +17,8 @@ parser.add_argument('--data', type=str, default='./data/sz002821_2',
                     help='location of the data')
 parser.add_argument('--nfeatures', type=int, default=30,
                     help='dimension of features')
+parser.add_argument('--contexts', type=int, default=5,
+                    help='size of the context')
 parser.add_argument('--nhid', type=int, default=100,
                     help='number of hidden units per layer')
 parser.add_argument('--lr', type=float, default=0.001,
@@ -111,7 +113,15 @@ class DataIter(object):
 
     def __iter__(self):
         for idx in range(0, self.data.size(0) - 1, 1):
-            data = Variable(self.data[idx])
+            data = []
+            for cur_idx in range(idx+1-args.contexts, idx+1):
+                if cur_idx < 0:
+                    data.append(np.zeros((self.batch_size, args.nfeatures)))
+                else:
+                    data.append(self.data[cur_idx].cpu().numpy())
+            data = np.concatenate(data, axis=1)
+            data = Variable(torch.Tensor(data))
+            data = data.cuda() if self.cuda else data
             target = Variable(self.label[idx])
             yield data, target
 
@@ -305,7 +315,7 @@ if __name__ == '__main__':
     ###############################################################################
 
     model = DNNModel(
-        nfed = args.nfeatures,
+        nfed = args.nfeatures * args.contexts,
         nhid = args.nhid,
         noutputs = 3,
         dropout = args.dropout,
